@@ -1,4 +1,5 @@
 use crate::block::{Block, BlockError};
+use crate::transaction::{Address, Transaction};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -19,24 +20,42 @@ pub struct Chain {
 }
 
 impl Chain {
-    pub fn new(difficulty: u32, genesis_data: Option<Vec<u8>>) -> Self {
-        let genesis_data = genesis_data.unwrap_or(b"Genesis block".to_vec());
-        let genesis_block = Block::new(genesis_data, [0; 32], difficulty);
+    pub fn new(difficulty: u32, genesis_tx: Option<Transaction>) -> Result<Self, ChainError> {
+        let genesis_tx = genesis_tx.unwrap_or_else(|| {
+            Transaction::new(
+                Address::new([0; 20]), // Genesis sender
+                Address::new([0; 20]), // Same address for genesis
+                1,                     // Genesis amount
+                0,                     // Genesis nonce
+            )
+        });
 
-        Self {
+        let mut genesis_block = Block::new(vec![genesis_tx], [0; 32], difficulty)?;
+
+        genesis_block.mine();
+
+        Ok(Self {
             blocks: vec![genesis_block],
             current_difficulty: difficulty,
-        }
+        })
     }
 
-    pub fn add_block(&mut self, data: Vec<u8>) -> Result<(), ChainError> {
+    pub fn add_block(&mut self, transactions: Vec<Transaction>) -> Result<(), ChainError> {
         let previous_block = self.blocks.last().ok_or(ChainError::EmptyChain)?;
 
-        let mut new_block = Block::new(data, previous_block.hash(), self.current_difficulty);
+        let mut new_block =
+            Block::new(transactions, previous_block.hash(), self.current_difficulty)?;
+
+        println!("Before mining - Hash: {:?}", new_block.hash());
+        println!("Difficulty: {}", self.current_difficulty);
 
         new_block.mine();
 
-        new_block.verify()?;
+        println!("After mining - Hash: {:?}", new_block.hash());
+        println!("Proof valid: {}", new_block.has_valid_proof());
+
+        // Verify the block before adding
+        new_block.verify(false)?;
 
         self.blocks.push(new_block);
         Ok(())
@@ -50,7 +69,10 @@ impl Chain {
 
         // verify genesis block
         let genesis_block = &self.blocks[0];
-        genesis_block.verify()?;
+        if genesis_block.previous_hash() != [0; 32] {
+            return Err(ChainError::InvalidGenesis);
+        }
+        genesis_block.verify(true)?;
 
         // verify rest of the chain
         for window in self.blocks.windows(2) {
@@ -61,7 +83,7 @@ impl Chain {
                 return Err(ChainError::InvalidBlockLink);
             }
 
-            current_block.verify()?;
+            current_block.verify(false)?;
         }
         Ok(())
     }
