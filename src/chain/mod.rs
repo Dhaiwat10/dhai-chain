@@ -1,4 +1,5 @@
 use crate::block::{Block, BlockError};
+use crate::mempool::{Mempool, MempoolError};
 use crate::transaction::{Address, Transaction};
 use thiserror::Error;
 
@@ -12,11 +13,14 @@ pub enum ChainError {
     BlockValidation(#[from] BlockError),
     #[error("Chain is empty")]
     EmptyChain,
+    #[error("Mempool error: {0}")]
+    MempoolError(#[from] MempoolError),
 }
 
 pub struct Chain {
     blocks: Vec<Block>,
     current_difficulty: u32,
+    mempool: Mempool,
 }
 
 impl Chain {
@@ -37,24 +41,50 @@ impl Chain {
         Ok(Self {
             blocks: vec![genesis_block],
             current_difficulty: difficulty,
+            mempool: Mempool::new(),
         })
     }
 
-    pub fn add_block(&mut self, transactions: Vec<Transaction>) -> Result<(), ChainError> {
+    pub fn submit_transaction(&mut self, transaction: Transaction) -> Result<(), ChainError> {
+        self.mempool.add_transaction(transaction)?;
+        Ok(())
+    }
+
+    pub fn add_block(&mut self) -> Result<(), ChainError> {
+        let previous_block = self.blocks.last().ok_or(ChainError::EmptyChain)?;
+
+        let transactions = self.mempool.get_transactions(10);
+
+        if transactions.is_empty() {
+            // todo: handle empty mempool
+            return Ok(());
+        }
+
+        let mut new_block = Block::new(
+            transactions.clone(),
+            previous_block.hash(),
+            self.current_difficulty,
+        )?;
+
+        new_block.mine();
+        new_block.verify(false)?;
+
+        self.mempool.remove_transactions(&transactions);
+        self.blocks.push(new_block);
+
+        Ok(())
+    }
+
+    pub fn add_block_with_transactions(
+        &mut self,
+        transactions: Vec<Transaction>,
+    ) -> Result<(), ChainError> {
         let previous_block = self.blocks.last().ok_or(ChainError::EmptyChain)?;
 
         let mut new_block =
             Block::new(transactions, previous_block.hash(), self.current_difficulty)?;
 
-        println!("Before mining - Hash: {:?}", new_block.hash());
-        println!("Difficulty: {}", self.current_difficulty);
-
         new_block.mine();
-
-        println!("After mining - Hash: {:?}", new_block.hash());
-        println!("Proof valid: {}", new_block.has_valid_proof());
-
-        // Verify the block before adding
         new_block.verify(false)?;
 
         self.blocks.push(new_block);

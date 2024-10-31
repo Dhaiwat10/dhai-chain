@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -10,7 +11,7 @@ pub enum TransactionError {
     SameSenderReceiver,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Address([u8; 20]); // 20 bytes address like Ethereum
 
 impl Address {
@@ -23,7 +24,7 @@ impl Address {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Transaction {
     sender: Address,
     receiver: Address,
@@ -67,6 +68,15 @@ impl Transaction {
 
     pub fn nonce(&self) -> u64 {
         self.nonce
+    }
+
+    pub fn hash(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(self.sender.as_bytes());
+        hasher.update(self.receiver.as_bytes());
+        hasher.update(self.amount.to_be_bytes());
+        hasher.update(self.nonce.to_be_bytes());
+        hasher.finalize().into()
     }
 }
 
